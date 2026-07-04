@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual env
+.venv/
+myenv/
+venv/
+env/
+
+# Flask
+instance/
+.webassets-cache
+
+# Migrations and local db
+*.db
+*.sqlite
+*.sqlite3
+
+# Env
+.env
+
+# Logs
+*.log
+
+# OS
+.DS_Store
