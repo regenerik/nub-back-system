@@ -42,6 +42,15 @@ CLOUDINARY_FOLDER_NAME=nub-system
 
 El frontend no debe tener `CLOUDINARY_API_SECRET`.
 
+Para Auth0 con frontend estatico:
+
+```env
+AUTH0_DOMAIN=dev-1a67u9mz.us.auth0.com
+AUTH0_CLIENT_ID=MRrsVJYMkQ7hK5LCVGTvfyR1ereHvoQZ
+```
+
+El backend recibe el `id_token` del static frontend en `POST /api/auth/auth0`, valida firma/issuer/audience con JWKS de Auth0 y emite el JWT interno de NUB.
+
 ## Comandos
 
 ```bash
@@ -147,6 +156,7 @@ Socket.IO no es la fuente de consistencia. Las validaciones, transacciones y con
 - `POST /api/auth/login`
 - `POST /api/auth/register-client`
 - `POST /api/auth/google`
+- `POST /api/auth/auth0`
 - `GET /api/auth/me`
 - `GET /api/client/me/profile`
 - `PATCH /api/client/me/profile`
@@ -178,6 +188,14 @@ Start command:
 python run.py
 ```
 
-Configurar `DATABASE_URL`, `JWT_SECRET_KEY`, `FRONTEND_URL`, `SOCKET_CORS_ORIGINS` y credenciales de Cloudinary/Google desde el panel de Render.
+Configurar `DATABASE_URL`, `JWT_SECRET_KEY`, `FRONTEND_URL`, `CORS_ORIGINS`, `SOCKET_CORS_ORIGINS`, `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID` y credenciales de Cloudinary desde el panel de Render.
+
+Ejemplo de origenes cuando el frontend esta en Render Static:
+
+```env
+FRONTEND_URL=https://TU-FRONTEND.onrender.com
+CORS_ORIGINS=https://TU-FRONTEND.onrender.com,http://localhost:4017,http://127.0.0.1:4017
+SOCKET_CORS_ORIGINS=https://TU-FRONTEND.onrender.com,http://localhost:4017,http://127.0.0.1:4017
+```
 
 La base principal debe ser SQL. Google Sheets no se usa como base de datos principal en esta version.

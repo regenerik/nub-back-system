@@ -42,6 +42,8 @@ class BaseConfig:
     CLOUDINARY_FOLDER_NAME = os.getenv("CLOUDINARY_FOLDER_NAME", "nub-system")
     GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
     GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+    AUTH0_DOMAIN = os.getenv("AUTH0_DOMAIN", "dev-1a67u9mz.us.auth0.com")
+    AUTH0_CLIENT_ID = os.getenv("AUTH0_CLIENT_ID", "MRrsVJYMkQ7hK5LCVGTvfyR1ereHvoQZ")
     MAX_CONTENT_LENGTH = 5 * 1024 * 1024
 
 
