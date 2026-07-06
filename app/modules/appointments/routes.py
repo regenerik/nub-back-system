@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 
 from flask import Blueprint, Response, request
 from sqlalchemy import func
@@ -12,7 +13,7 @@ from app.modules.branches.models import Branch
 from app.modules.clients.models import Client
 from app.modules.payments.models import Payment
 from app.modules.sales.models import Sale
-from app.modules.services.models import Service
+from app.modules.services.models import BranchService, Service
 from app.security import current_user, login_required, roles_required
 from app.services.appointment_service import (
     AppointmentConflict,
@@ -138,6 +139,22 @@ def scheduled_statuses() -> list[str]:
 def append_internal_note(appointment: Appointment, note: str) -> None:
     previous = (appointment.internal_notes or "").strip()
     appointment.internal_notes = f"{previous}\n{note}".strip() if previous else note
+
+
+def branch_service_or_error(branch_id: int, service_id: int) -> Service:
+    service = db.session.get(Service, service_id)
+    if not service or not service.is_active:
+        raise ValueError("Servicio invalido.")
+    link = db.session.scalar(
+        db.select(BranchService).where(
+            BranchService.branch_id == branch_id,
+            BranchService.service_id == service_id,
+            BranchService.is_active.is_(True),
+        )
+    )
+    if not link:
+        raise ValueError("El servicio no esta disponible en esa sucursal.")
+    return service
 
 
 def can_manage_branch(branch_id: int) -> bool:
@@ -401,6 +418,73 @@ def update_appointment(appointment_id):
     for field in ("status", "customer_comment", "internal_notes", "total_final"):
         if field in payload:
             setattr(appointment, field, payload[field])
+    db.session.commit()
+    emit_appointment_event("appointment:updated", appointment)
+    return appointment_to_dict(appointment)
+
+
+@appointments_bp.patch("/<int:appointment_id>/items")
+@roles_required([Role.ADMIN, Role.RECEPCION])
+def update_appointment_items(appointment_id):
+    appointment = db.session.get(Appointment, appointment_id)
+    if not appointment:
+        return {"message": "Turno no encontrado."}, 404
+    payload = get_json_payload()
+    service_ids = [int(item) for item in payload.get("service_ids") or [] if item]
+    if not service_ids:
+        return {"message": "El turno debe tener al menos un servicio."}, 400
+    user = current_user()
+    if user and user.role == Role.RECEPCION.value and user.branch_id and appointment.branch_id != user.branch_id:
+        return {"message": "Recepcion solo puede editar turnos de su sucursal."}, 403
+    try:
+        services = [branch_service_or_error(appointment.branch_id, service_id) for service_id in service_ids]
+    except ValueError as exc:
+        return {"message": str(exc)}, 400
+
+    duration = sum(service.duration_minutes for service in services)
+    new_ends_at = appointment.starts_at + timedelta(minutes=duration)
+    if has_schedule_block(appointment.branch_id, appointment.barber_id, appointment.starts_at, new_ends_at):
+        return {"message": "El nuevo tiempo del turno pisa un bloqueo de agenda."}, 409
+    overlaps = appointment_overlaps(appointment.id, appointment.barber_id, appointment.starts_at, new_ends_at)
+    if overlaps:
+        return {
+            "message": "El nuevo tiempo del turno se superpone con otro turno existente.",
+            "code": "appointment_overlap",
+            "overlaps": [appointment_to_dict(item) for item in overlaps],
+        }, 409
+    if not barber_is_available(
+        appointment.branch_id,
+        appointment.barber_id,
+        appointment.starts_at,
+        new_ends_at,
+        appointment.id,
+    ):
+        return {"message": "El nuevo tiempo del turno queda fuera de la disponibilidad del barbero o sucursal."}, 409
+
+    appointment.primary_service_id = services[0].id
+    total = sum(Decimal(str(service.price)) for service in services)
+    total_final = Decimal(str(payload.get("total_final", total)))
+    if total_final < total and not (user and (user.role == Role.ADMIN.value or user.can_apply_discounts)):
+        return {"message": "No tenes permiso para aplicar descuentos."}, 403
+    appointment.ends_at = new_ends_at
+    appointment.total_estimated = total
+    appointment.total_final = total_final
+
+    existing = db.session.scalars(
+        db.select(AppointmentExtraService).where(AppointmentExtraService.appointment_id == appointment.id)
+    ).all()
+    for extra in existing:
+        db.session.delete(extra)
+    db.session.flush()
+    for service in services[1:]:
+        db.session.add(
+            AppointmentExtraService(
+                appointment_id=appointment.id,
+                service_id=service.id,
+                price_at_booking=service.price,
+                duration_minutes_at_booking=service.duration_minutes,
+            )
+        )
     db.session.commit()
     emit_appointment_event("appointment:updated", appointment)
     return appointment_to_dict(appointment)

@@ -43,6 +43,7 @@ def overview(filters: dict) -> dict:
     appointments = db.session.scalars(appointments_query).all()
 
     revenue_total = sum(sale.total for sale in sales if sale.status != SaleStatus.CANCELLED.value)
+    discount_total = sum(sale.discount_amount for sale in sales if sale.status != SaleStatus.CANCELLED.value)
     sales_count = len(sales)
     paid_sales = [sale for sale in sales if sale.status == SaleStatus.PAID.value]
     average_ticket = revenue_total / len(paid_sales) if paid_sales else 0
@@ -75,6 +76,7 @@ def overview(filters: dict) -> dict:
 
     return {
         "revenue_total": serialize_value(revenue_total),
+        "discount_total": serialize_value(discount_total),
         "sales_count": sales_count,
         "appointments_total": len(appointments),
         "appointments_completed": sum(
