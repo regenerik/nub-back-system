@@ -7,6 +7,7 @@ from app.constants import AppointmentStatus, Role
 from app.extensions import db
 from app.live import appointment_room, emit_live_event
 from app.modules.appointments.models import Appointment, AppointmentExtraService, BranchDateClosure, ScheduleBlock
+from app.modules.barbers.models import Barber
 from app.modules.clients.models import Client
 from app.modules.payments.models import Payment
 from app.modules.sales.models import Sale
@@ -40,6 +41,9 @@ def appointment_to_dict(appointment: Appointment) -> dict:
     client = db.session.get(Client, appointment.client_id)
     if client:
         data["client"] = model_to_dict(client)
+    barber = db.session.get(Barber, appointment.barber_id)
+    if barber:
+        data["barber"] = model_to_dict(barber)
     primary = db.session.get(Service, appointment.primary_service_id)
     if primary:
         data["primary_service"] = model_to_dict(primary)
@@ -542,8 +546,6 @@ def barber_me_appointments():
     if not user:
         return {"items": []}
     # The user_id to barber_id mapping is direct in this initial schema.
-    from app.modules.barbers.models import Barber
-
     barber = db.session.scalar(db.select(Barber).where(Barber.user_id == user.id))
     if not barber:
         return {"items": []}
@@ -559,8 +561,6 @@ def client_me_appointments():
     user = current_user()
     if not user:
         return {"items": []}
-    from app.modules.clients.models import Client
-
     client_query = db.select(Client).where(Client.email == user.email)
     if user.google_account_id:
         client_query = db.select(Client).where(
@@ -571,6 +571,41 @@ def client_me_appointments():
         return {"items": []}
     items = db.session.scalars(db.select(Appointment).where(Appointment.client_id == client.id)).all()
     return {"items": [appointment_to_dict(item) for item in items]}
+
+
+@client_me_bp.patch("/me/appointments/<int:appointment_id>/cancel")
+@login_required
+def client_cancel_appointment(appointment_id):
+    user = current_user()
+    if not user:
+        return {"message": "Usuario no encontrado."}, 404
+    client_query = db.select(Client).where(Client.email == user.email)
+    if user.google_account_id:
+        client_query = db.select(Client).where(
+            (Client.email == user.email) | (Client.google_account_id == user.google_account_id)
+        )
+    client = db.session.scalar(client_query)
+    if not client:
+        return {"message": "Cliente no encontrado."}, 404
+    appointment = db.session.get(Appointment, appointment_id)
+    if not appointment or appointment.client_id != client.id:
+        return {"message": "Turno no encontrado."}, 404
+    if appointment.status in (
+        AppointmentStatus.COMPLETED.value,
+        AppointmentStatus.CANCELLED.value,
+        AppointmentStatus.NO_SHOW.value,
+    ):
+        return {"message": "Este turno ya no se puede cancelar."}, 409
+    appointment.status = AppointmentStatus.CANCELLED.value
+    appointment.cancellation_reason = "Cancelado por el cliente desde su panel."
+    append_internal_note(appointment, "[Cancelacion cliente] Cancelado desde panel cliente.")
+    db.session.commit()
+    emit_live_event(
+        "appointment:cancelled",
+        appointment_to_dict(appointment),
+        room=f"branch:{appointment.branch_id}",
+    )
+    return appointment_to_dict(appointment)
 
 
 @appointments_bp.get("/<int:appointment_id>/calendar.ics")
