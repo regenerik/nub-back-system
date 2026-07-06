@@ -19,6 +19,7 @@ from app.services.appointment_service import (
     barber_is_available,
     create_appointment_atomic,
     get_public_availability,
+    get_public_availability_summary,
 )
 from app.services.appointment_auto_complete import auto_complete_appointment_if_ready
 from app.utils.http import get_json_payload, list_response, model_to_dict, parse_date_time
@@ -142,6 +143,22 @@ def availability():
     payload["extra_service_ids"] = request.args.getlist("extra_service_ids")
     try:
         return get_public_availability(payload)
+    except MissingBranchServices as exc:
+        return {
+            "message": str(exc),
+            "code": "service_missing_in_branch",
+            "missing_services": exc.services,
+        }, 409
+    except (KeyError, ValueError, AppointmentValidationError) as exc:
+        return {"message": str(exc)}, 400
+
+
+@public_availability_bp.get("/availability-summary")
+def availability_summary():
+    payload = request.args.to_dict()
+    payload["extra_service_ids"] = request.args.getlist("extra_service_ids")
+    try:
+        return get_public_availability_summary(payload)
     except MissingBranchServices as exc:
         return {
             "message": str(exc),

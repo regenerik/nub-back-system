@@ -317,6 +317,35 @@ def get_public_availability(payload: dict) -> dict:
     return {"items": slots}
 
 
+def get_public_availability_summary(payload: dict) -> dict:
+    month_value = payload["month"]
+    month_start = datetime.fromisoformat(f"{month_value}-01").date()
+    if month_start.month == 12:
+        next_month = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month = month_start.replace(month=month_start.month + 1)
+
+    today = datetime.utcnow().date()
+    days = []
+    cursor = month_start
+    while cursor < next_month:
+        key = cursor.isoformat()
+        if cursor < today:
+            days.append({"date": key, "count": 0})
+            cursor += timedelta(days=1)
+            continue
+        availability = get_public_availability(payload | {"date": key})
+        days.append(
+            {
+                "date": key,
+                "count": len(availability.get("items", [])),
+                "closed": availability.get("closed", False),
+            }
+        )
+        cursor += timedelta(days=1)
+    return {"items": days}
+
+
 def create_appointment_atomic(
     payload: dict,
     created_by_user_id: int | None = None,
