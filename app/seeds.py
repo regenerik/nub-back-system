@@ -169,25 +169,39 @@ def seed_initial_data() -> None:
             )
         )
 
-    db.session.add(
-        Expense(
-            branch_id=branches[0].id,
-            category="alquiler",
-            description="Gasto demo",
-            amount=Decimal("120000"),
-            expense_date=date.today(),
-            created_by_user_id=admin.id,
+    if not db.session.scalar(
+        db.select(Expense).where(
+            Expense.branch_id == branches[0].id,
+            Expense.category == "alquiler",
+            Expense.description == "Gasto demo",
         )
-    )
-    db.session.add(
-        SalaryPayment(
-            branch_id=branches[0].id,
-            barber_id=barbers[0].id,
-            amount=Decimal("80000"),
-            period_start=date.today().replace(day=1),
-            period_end=date.today(),
-            paid_at=datetime.combine(date.today(), time(hour=12)),
-            created_by_user_id=admin.id,
+    ):
+        db.session.add(
+            Expense(
+                branch_id=branches[0].id,
+                category="alquiler",
+                description="Gasto demo",
+                amount=Decimal("120000"),
+                expense_date=date.today(),
+                created_by_user_id=admin.id,
+            )
         )
-    )
+    if not db.session.scalar(
+        db.select(SalaryPayment).where(
+            SalaryPayment.branch_id == branches[0].id,
+            SalaryPayment.barber_id == barbers[0].id,
+            SalaryPayment.period_start == date.today().replace(day=1),
+        )
+    ):
+        db.session.add(
+            SalaryPayment(
+                branch_id=branches[0].id,
+                barber_id=barbers[0].id,
+                amount=Decimal("80000"),
+                period_start=date.today().replace(day=1),
+                period_end=date.today(),
+                paid_at=datetime.combine(date.today(), time(hour=12)),
+                created_by_user_id=admin.id,
+            )
+        )
     db.session.commit()
