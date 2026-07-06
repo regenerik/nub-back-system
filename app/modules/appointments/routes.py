@@ -85,6 +85,22 @@ def appointment_to_dict(appointment: Appointment) -> dict:
     return data
 
 
+def emit_appointment_event(
+    event_name: str,
+    appointment: Appointment,
+    previous_branch_id: int | None = None,
+    previous_barber_id: int | None = None,
+) -> None:
+    rooms = set(appointment_room(appointment.branch_id, appointment.barber_id, appointment.client_id))
+    if previous_branch_id and previous_branch_id != appointment.branch_id:
+        rooms.update(appointment_room(previous_branch_id, None, appointment.client_id))
+    if previous_barber_id and previous_barber_id != appointment.barber_id:
+        rooms.add(f"barber:{previous_barber_id}")
+    payload = appointment_to_dict(appointment)
+    for room in rooms:
+        emit_live_event(event_name, payload, room=room)
+
+
 def appointment_overlaps(appointment_id: int, barber_id: int, starts_at: datetime, ends_at: datetime) -> list[Appointment]:
     return db.session.scalars(
         db.select(Appointment).where(
@@ -298,7 +314,7 @@ def reopen_date_closure():
             append_internal_note(appointment, f"[Fecha habilitada] Vuelve a agenda: {target_date.isoformat()}.")
     db.session.commit()
     for appointment in restored:
-        emit_live_event("appointment:updated", appointment_to_dict(appointment), room=f"branch:{appointment.branch_id}")
+        emit_appointment_event("appointment:updated", appointment)
     return {"closure": date_closure_to_dict(closure) if closure else None, "restored_count": len(restored)}
 
 
@@ -347,7 +363,7 @@ def reprogram_date():
         append_internal_note(appointment, note)
     db.session.commit()
     for appointment in appointments:
-        emit_live_event("appointment:updated", appointment_to_dict(appointment), room=f"branch:{appointment.branch_id}")
+        emit_appointment_event("appointment:updated", appointment)
     return {"count": len(appointments), "items": [appointment_to_dict(item) for item in appointments]}
 
 
@@ -386,7 +402,7 @@ def update_appointment(appointment_id):
         if field in payload:
             setattr(appointment, field, payload[field])
     db.session.commit()
-    emit_live_event("appointment:updated", appointment_to_dict(appointment), room=f"branch:{appointment.branch_id}")
+    emit_appointment_event("appointment:updated", appointment)
     return appointment_to_dict(appointment)
 
 
@@ -400,6 +416,8 @@ def reschedule_appointment(appointment_id):
     user = current_user()
     starts_at = parse_date_time(payload)
     duration = appointment.ends_at - appointment.starts_at
+    previous_branch_id = appointment.branch_id
+    previous_barber_id = appointment.barber_id
     barber_id = int(payload.get("barber_id") or appointment.barber_id)
     branch_id = int(payload.get("branch_id") or appointment.branch_id)
     if user and user.role == Role.RECEPCION.value and user.branch_id:
@@ -428,11 +446,7 @@ def reschedule_appointment(appointment_id):
     appointment.ends_at = starts_at + duration
     appointment.status = AppointmentStatus.RESCHEDULED.value
     db.session.commit()
-    emit_live_event(
-        "appointment:rescheduled",
-        appointment_to_dict(appointment),
-        room=f"branch:{appointment.branch_id}",
-    )
+    emit_appointment_event("appointment:rescheduled", appointment, previous_branch_id, previous_barber_id)
     return appointment_to_dict(appointment)
 
 
@@ -446,6 +460,8 @@ def reprogram_appointment(appointment_id):
     user = current_user()
     starts_at = parse_date_time(payload)
     duration = appointment.ends_at - appointment.starts_at
+    previous_branch_id = appointment.branch_id
+    previous_barber_id = appointment.barber_id
     barber_id = int(payload.get("barber_id") or appointment.barber_id)
     branch_id = int(payload.get("branch_id") or appointment.branch_id)
     if user and user.role == Role.RECEPCION.value and user.branch_id:
@@ -476,11 +492,7 @@ def reprogram_appointment(appointment_id):
     appointment.ends_at = starts_at + duration
     appointment.status = AppointmentStatus.RESCHEDULED.value
     db.session.commit()
-    emit_live_event(
-        "appointment:rescheduled",
-        appointment_to_dict(appointment),
-        room=f"branch:{appointment.branch_id}",
-    )
+    emit_appointment_event("appointment:rescheduled", appointment, previous_branch_id, previous_barber_id)
     return appointment_to_dict(appointment)
 
 
@@ -494,10 +506,9 @@ def check_in_appointment(appointment_id):
     completed = auto_complete_appointment_if_ready(appointment)
     db.session.commit()
     if completed:
-        for room in appointment_room(appointment.branch_id, appointment.barber_id):
-            emit_live_event("appointment:completed", appointment_to_dict(appointment), room=room)
+        emit_appointment_event("appointment:completed", appointment)
     else:
-        emit_live_event("appointment:updated", appointment_to_dict(appointment), room=f"branch:{appointment.branch_id}")
+        emit_appointment_event("appointment:updated", appointment)
     return appointment_to_dict(appointment)
 
 
@@ -509,7 +520,7 @@ def no_show_appointment(appointment_id):
         return {"message": "Turno no encontrado."}, 404
     appointment.status = AppointmentStatus.NO_SHOW.value
     db.session.commit()
-    emit_live_event("appointment:updated", appointment_to_dict(appointment), room=f"branch:{appointment.branch_id}")
+    emit_appointment_event("appointment:updated", appointment)
     return appointment_to_dict(appointment)
 
 
@@ -522,11 +533,7 @@ def cancel_appointment(appointment_id):
     appointment.status = AppointmentStatus.CANCELLED.value
     appointment.cancellation_reason = get_json_payload().get("cancellation_reason")
     db.session.commit()
-    emit_live_event(
-        "appointment:cancelled",
-        appointment_to_dict(appointment),
-        room=f"branch:{appointment.branch_id}",
-    )
+    emit_appointment_event("appointment:cancelled", appointment)
     return appointment_to_dict(appointment)
 
 
@@ -538,8 +545,7 @@ def complete_appointment(appointment_id):
         return {"message": "Turno no encontrado."}, 404
     appointment.status = AppointmentStatus.COMPLETED.value
     db.session.commit()
-    for room in appointment_room(appointment.branch_id, appointment.barber_id):
-        emit_live_event("appointment:completed", appointment_to_dict(appointment), room=room)
+    emit_appointment_event("appointment:completed", appointment)
     return appointment_to_dict(appointment)
 
 
@@ -604,11 +610,7 @@ def client_cancel_appointment(appointment_id):
     appointment.cancellation_reason = "Cancelado por el cliente desde su panel."
     append_internal_note(appointment, "[Cancelacion cliente] Cancelado desde panel cliente.")
     db.session.commit()
-    emit_live_event(
-        "appointment:cancelled",
-        appointment_to_dict(appointment),
-        room=f"branch:{appointment.branch_id}",
-    )
+    emit_appointment_event("appointment:cancelled", appointment)
     return appointment_to_dict(appointment)
 
 

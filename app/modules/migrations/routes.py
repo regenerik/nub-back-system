@@ -4,6 +4,7 @@ from flask import Blueprint
 
 from app.constants import AppointmentStatus, Role, StockMovementType
 from app.extensions import db
+from app.live import appointment_room, emit_live_event
 from app.modules.appointments.models import Appointment, BarberAvailability, ScheduleBlock
 from app.modules.barbers.models import Barber, BarberBranch
 from app.modules.branches.models import Branch
@@ -27,6 +28,17 @@ ACTIVE_STATUSES = (
 def _append_note(appointment: Appointment, note: str) -> None:
     previous = (appointment.internal_notes or "").strip()
     appointment.internal_notes = f"{previous}\n{note}".strip() if previous else note
+
+
+def _emit_appointment_updated(appointment: Appointment, previous_branch_id: int | None = None, previous_barber_id: int | None = None):
+    rooms = set(appointment_room(appointment.branch_id, appointment.barber_id, appointment.client_id))
+    if previous_branch_id and previous_branch_id != appointment.branch_id:
+        rooms.update(appointment_room(previous_branch_id, None, appointment.client_id))
+    if previous_barber_id and previous_barber_id != appointment.barber_id:
+        rooms.add(f"barber:{previous_barber_id}")
+    payload = model_to_dict(appointment)
+    for room in rooms:
+        emit_live_event("appointment:updated", payload, room=room)
 
 
 def _set_branch_link(model, entity_field: str, entity_id: int, branch_id: int, active: bool = True):
@@ -203,7 +215,10 @@ def migrate_barber():
     moved = 0
     reprogrammed = 0
     transferred = 0
+    touched = []
     for appointment in future:
+        previous_branch_id = appointment.branch_id
+        previous_barber_id = appointment.barber_id
         duration_end = appointment.ends_at
         if mode == "with_turns":
             appointment.branch_id = target_branch_id
@@ -213,6 +228,7 @@ def migrate_barber():
                 appointment.status = AppointmentStatus.PENDING_RESCHEDULE.value
                 _append_note(appointment, "[A reprogramar] Migracion de barbero: horario no disponible en destino.")
                 reprogrammed += 1
+            touched.append((appointment, previous_branch_id, previous_barber_id))
             continue
 
         if turn_action == "reprogram_target":
@@ -232,8 +248,11 @@ def migrate_barber():
             appointment.status = AppointmentStatus.PENDING_RESCHEDULE.value
             _append_note(appointment, "[A reprogramar] Barbero migrado sin turnos; pendiente en sucursal original.")
             reprogrammed += 1
+        touched.append((appointment, previous_branch_id, previous_barber_id))
 
     db.session.commit()
+    for appointment, previous_branch_id, previous_barber_id in touched:
+        _emit_appointment_updated(appointment, previous_branch_id, previous_barber_id)
     return {"message": "Barbero migrado.", "moved": moved, "reprogrammed": reprogrammed, "transferred": transferred}
 
 
@@ -353,4 +372,6 @@ def create_schedule_block():
         appointment.status = AppointmentStatus.PENDING_RESCHEDULE.value
         _append_note(appointment, f"[A reprogramar] Bloqueo de agenda: {payload.get('reason') or 'sin motivo'}.")
     db.session.commit()
+    for appointment in affected:
+        _emit_appointment_updated(appointment)
     return {"block": model_to_dict(block), "affected_count": len(affected)}

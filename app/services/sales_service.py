@@ -4,7 +4,7 @@ from flask_jwt_extended import get_jwt
 
 from app.constants import PaymentMethod, SaleItemKind, SaleStatus, StockMovementType
 from app.extensions import db
-from app.live import emit_live_event
+from app.live import appointment_room, emit_live_event
 from app.modules.inventory.models import BranchProductStock, StockMovement
 from app.modules.appointments.models import Appointment
 from app.modules.payments.models import Payment
@@ -125,6 +125,7 @@ def create_sale(payload: dict, created_by_user_id: int | None = None) -> Sale:
     sale.subtotal = subtotal
     sale.total = max(Decimal("0"), subtotal - discount_amount)
 
+    completed_appointment = None
     payment_payload = payload.get("payment")
     if payment_payload:
         payment_amount = Decimal(str(payment_payload.get("amount", sale.total)))
@@ -143,8 +144,17 @@ def create_sale(payload: dict, created_by_user_id: int | None = None) -> Sale:
             else SaleStatus.PARTIALLY_PAID.value
         )
         if sale.appointment_id:
-            auto_complete_appointment_if_ready(db.session.get(Appointment, sale.appointment_id))
+            appointment = db.session.get(Appointment, sale.appointment_id)
+            if auto_complete_appointment_if_ready(appointment):
+                completed_appointment = appointment
 
     emit_live_event("sale:created", model_to_dict(sale), room=f"branch:{branch_id}")
+    if completed_appointment:
+        for room in appointment_room(
+            completed_appointment.branch_id,
+            completed_appointment.barber_id,
+            completed_appointment.client_id,
+        ):
+            emit_live_event("appointment:completed", model_to_dict(completed_appointment), room=room)
     emit_live_event("stats:updated", {"branch_id": branch_id}, room=f"branch:{branch_id}")
     return sale

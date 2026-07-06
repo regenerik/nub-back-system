@@ -2,7 +2,7 @@ from flask import Blueprint, request
 
 from app.constants import Role, SaleStatus
 from app.extensions import db
-from app.live import emit_live_event
+from app.live import appointment_room, emit_live_event
 from app.modules.appointments.models import Appointment
 from app.modules.payments.models import Payment
 from app.modules.sales.models import Sale
@@ -95,6 +95,11 @@ def add_payment(sale_id):
     db.session.commit()
     emit_live_event("sale:paid", model_to_dict(sale), room=f"branch:{sale.branch_id}")
     if completed_appointment:
-        emit_live_event("appointment:completed", model_to_dict(completed_appointment), room=f"branch:{completed_appointment.branch_id}")
+        for room in appointment_room(
+            completed_appointment.branch_id,
+            completed_appointment.barber_id,
+            completed_appointment.client_id,
+        ):
+            emit_live_event("appointment:completed", model_to_dict(completed_appointment), room=room)
     emit_live_event("stats:updated", {"branch_id": sale.branch_id}, room=f"branch:{sale.branch_id}")
     return {"sale": model_to_dict(sale), "payment": model_to_dict(payment)}, 201

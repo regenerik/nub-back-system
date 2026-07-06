@@ -5,6 +5,7 @@ from sqlalchemy import func
 
 from app.constants import AppointmentStatus, Role
 from app.extensions import db
+from app.live import appointment_room, emit_live_event
 from app.modules.appointments.models import Appointment
 from app.modules.barbers.models import BarberBranch
 from app.modules.branches.models import Branch
@@ -63,6 +64,15 @@ def _outside_branch_hours(appointment, branch):
 
 def _append_internal_note(appointment, note):
     appointment.internal_notes = f"{appointment.internal_notes}\n{note}" if appointment.internal_notes else note
+
+
+def _emit_appointment_updated(appointment, previous_branch_id=None):
+    rooms = set(appointment_room(appointment.branch_id, appointment.barber_id, appointment.client_id))
+    if previous_branch_id and previous_branch_id != appointment.branch_id:
+        rooms.update(appointment_room(previous_branch_id, None, appointment.client_id))
+    payload = model_to_dict(appointment)
+    for room in rooms:
+        emit_live_event("appointment:updated", payload, room=room)
 
 
 @public_branches_bp.get("/branches")
@@ -210,7 +220,9 @@ def delete_branch(branch_id):
                     )
                 )
             link.is_active = False
+        touched_appointments = []
         for appointment in appointments:
+            previous_branch_id = appointment.branch_id
             appointment.branch_id = target.id
             if (
                 appointment.status in REPROGRAM_ON_MIGRATION_STATUSES
@@ -222,15 +234,20 @@ def delete_branch(branch_id):
                     f"[A reprogramar] Migrado a {target.name}; fuera del horario de la sucursal destino.",
                 )
                 reprogrammed_count += 1
+            touched_appointments.append((appointment, previous_branch_id))
     elif active_barber_links:
         reprogrammed_count = 0
+        touched_appointments = []
         for link in active_barber_links:
             link.is_active = False
     else:
         reprogrammed_count = 0
+        touched_appointments = []
 
     branch.is_active = False
     db.session.commit()
+    for appointment, previous_branch_id in touched_appointments:
+        _emit_appointment_updated(appointment, previous_branch_id)
     return {
         "message": "Sucursal desactivada.",
         "branch": model_to_dict(branch),

@@ -441,7 +441,7 @@ def create_appointment_atomic(
             )
         )
 
-    for room in appointment_room(branch_id, barber_id):
+    for room in appointment_room(branch_id, barber_id, appointment.client_id):
         emit_live_event("appointment:created", model_to_dict(appointment), room=room)
 
     return appointment
