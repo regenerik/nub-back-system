@@ -8,6 +8,7 @@ from app.extensions import db
 from app.live import appointment_room, emit_live_event
 from app.modules.appointments.models import Appointment, AppointmentExtraService, BranchDateClosure, ScheduleBlock
 from app.modules.barbers.models import Barber
+from app.modules.branches.models import Branch
 from app.modules.clients.models import Client
 from app.modules.payments.models import Payment
 from app.modules.sales.models import Sale
@@ -38,6 +39,9 @@ def date_closure_to_dict(closure: BranchDateClosure) -> dict:
 
 def appointment_to_dict(appointment: Appointment) -> dict:
     data = model_to_dict(appointment)
+    branch = db.session.get(Branch, appointment.branch_id)
+    if branch:
+        data["branch"] = model_to_dict(branch)
     client = db.session.get(Client, appointment.client_id)
     if client:
         data["client"] = model_to_dict(client)
