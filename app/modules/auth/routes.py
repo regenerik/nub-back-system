@@ -71,7 +71,7 @@ def _login_with_external_profile(
         db.session.flush()
     else:
         user.google_account_id = external_id
-        if profile_image_url:
+        if profile_image_url and not user.profile_image_url:
             user.profile_image_url = profile_image_url
         if user.role in (Role.CLIENTE.value, Role.BARBERO.value):
             user.can_apply_discounts = False
@@ -79,13 +79,17 @@ def _login_with_external_profile(
         barber.user_id = user.id
         if profile_image_url and not barber.profile_image_url:
             barber.profile_image_url = profile_image_url
+        if barber.profile_image_url:
+            user.profile_image_url = barber.profile_image_url
         db.session.commit()
         return {"access_token": _token_for(user), "user": model_to_dict(user, {"password_hash"})}
     client = db.session.scalar(db.select(Client).where(Client.email == email))
     if client:
         client.google_account_id = external_id
-        if profile_image_url:
+        if profile_image_url and not client.profile_image_url:
             client.profile_image_url = profile_image_url
+        if client.profile_image_url:
+            user.profile_image_url = client.profile_image_url
     else:
         db.session.add(
             Client(
